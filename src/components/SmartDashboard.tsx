@@ -1,103 +1,155 @@
 import React, { useState } from 'react';
-import { UserProfile, HealthSyncData, MealItem, WorkoutLog } from '../types';
+import { DailyEntry, UserProfile } from '../types';
 import { ProgressRing } from './ProgressRing';
-import { notificationManager } from '../lib/notifications';
+import { formatLocalDateString } from '../lib/calculations';
 
 interface SmartDashboardProps {
   profile: UserProfile;
-  onUpdateProfile: (updated: UserProfile) => void;
-  healthData: HealthSyncData;
-  onSyncHealth: () => void;
-  onAddSteps: (steps: number) => void;
-  onSimulateInactivity: () => void;
-  meals: MealItem[];
-  workouts: WorkoutLog[];
-  waterMl: number;
-  onAddWater: (amountMl: number) => void;
-  openSosModal: () => void;
+  todayEntry: DailyEntry;
+  onUpdateTodayEntry: (updated: DailyEntry) => Promise<void>;
+  onUpdateProfile: (updated: UserProfile) => Promise<void>;
+  onOpenEditProfile: () => void;
+  onOpenSosCoach: () => void;
+  onNavigateTab: (tab: 'dashboard' | 'nutrition' | 'workouts' | 'reports' | 'reminders') => void;
 }
 
 export const SmartDashboard: React.FC<SmartDashboardProps> = ({
   profile,
+  todayEntry,
+  onUpdateTodayEntry,
   onUpdateProfile,
-  healthData,
-  onSyncHealth,
-  onAddSteps,
-  onSimulateInactivity,
-  meals,
-  workouts,
-  waterMl,
-  onAddWater,
-  openSosModal,
+  onOpenEditProfile,
+  onOpenSosCoach,
+  onNavigateTab,
 }) => {
-  const [isEditingWeight, setIsEditingWeight] = useState(false);
-  const [newWeight, setNewWeight] = useState(profile.currentWeightKg.toString());
-  const [showOAuthConfig, setShowOAuthConfig] = useState(false);
+  const [isLoggingWeight, setIsLoggingWeight] = useState(false);
+  const [weightInput, setWeightInput] = useState(
+    (todayEntry.weight || profile.currentWeightKg).toString()
+  );
 
-  // Calculations
-  const totalCaloriesConsumed = meals.reduce((sum, m) => sum + m.calories, 0);
-  const workoutCaloriesBurned = workouts.reduce((sum, w) => sum + w.caloriesBurned, 0);
-  const totalCaloriesBurned = healthData.activeCalories + workoutCaloriesBurned;
+  const [isEditingSteps, setIsEditingSteps] = useState(false);
+  const [stepsInput, setStepsInput] = useState(todayEntry.steps.toString());
 
-  // Weight loss goal metrics
-  const kgToLose = Math.max(0, profile.currentWeightKg - profile.targetWeightKg);
-  const totalLostSoFar = Math.max(0, 106 - profile.currentWeightKg); // started at 106
-  const progressPercent = Math.min(100, Math.round((totalLostSoFar / (106 - profile.targetWeightKg)) * 100));
+  // 1. Core Real Calculations
+  const consumed = todayEntry.caloriesConsumed || 0;
+  const burned = todayEntry.totalCaloriesBurned || 0;
+  const target = profile.dailyCalorieTarget || 2000;
+  const netCalories = consumed - burned;
+  const remainingCalories = target - netCalories;
 
-  // Daily deficit calculation:
-  // Baseline maintenance TDEE estimated for 22yo male 5'11" 106kg: ~2,750 kcal
-  const estimatedMaintenance = 2750;
-  const netCalories = totalCaloriesConsumed - totalCaloriesBurned;
-  const currentDeficit = estimatedMaintenance - netCalories;
-  // 1.5kg/week requires ~1,650 kcal deficit / day or ~1,150 food deficit + 500 exercise burn
-  const targetDailyDeficit = 1500;
+  // Weight metrics
+  const displayWeight = todayEntry.weight || profile.currentWeightKg;
+  const kgRemaining = Math.max(0, Number((displayWeight - profile.targetWeightKg).toFixed(1)));
+  const initialWeight = profile.currentWeightKg > profile.targetWeightKg ? profile.currentWeightKg : 100;
+  const totalWeightDropGoal = Math.max(1, initialWeight - profile.targetWeightKg);
+  const droppedSoFar = Math.max(0, initialWeight - displayWeight);
+  const weightProgressPct = Math.min(100, Math.round((droppedSoFar / totalWeightDropGoal) * 100));
 
-  const handleSaveWeight = (e: React.FormEvent) => {
+  // Handler: Log Weight
+  const handleSaveWeight = async (e: React.FormEvent) => {
     e.preventDefault();
-    const parsed = parseFloat(newWeight);
-    if (!isNaN(parsed) && parsed > 50 && parsed < 250) {
-      onUpdateProfile({
-        ...profile,
-        currentWeightKg: parsed,
+    const val = parseFloat(weightInput);
+    if (!isNaN(val) && val >= 30 && val <= 350) {
+      // 1. Update today's entry
+      const updatedDay: DailyEntry = {
+        ...todayEntry,
+        weight: val,
         updatedAt: new Date().toISOString(),
-      });
-      setIsEditingWeight(false);
+      };
+      await onUpdateTodayEntry(updatedDay);
+
+      // 2. Update profile current weight
+      const updatedProfile: UserProfile = {
+        ...profile,
+        currentWeightKg: val,
+        updatedAt: new Date().toISOString(),
+      };
+      await onUpdateProfile(updatedProfile);
+      setIsLoggingWeight(false);
     }
   };
 
+  // Handler: Water intake
+  const handleAddWater = async (amount: number) => {
+    const nextWater = (todayEntry.waterMl || 0) + amount;
+    const updatedDay: DailyEntry = {
+      ...todayEntry,
+      waterMl: nextWater,
+      updatedAt: new Date().toISOString(),
+    };
+    await onUpdateTodayEntry(updatedDay);
+  };
+
+  // Handler: Steps update
+  const handleSaveSteps = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = Math.max(0, parseInt(stepsInput, 10) || 0);
+    const stepBurn = Math.round(val * 0.04);
+    const updatedDay: DailyEntry = {
+      ...todayEntry,
+      steps: val,
+      stepCaloriesBurned: stepBurn,
+      totalCaloriesBurned: (todayEntry.workoutCaloriesBurned || 0) + stepBurn,
+      updatedAt: new Date().toISOString(),
+    };
+    await onUpdateTodayEntry(updatedDay);
+    setIsEditingSteps(false);
+  };
+
+  const handleQuickAddSteps = async (amount: number) => {
+    const nextSteps = (todayEntry.steps || 0) + amount;
+    const stepBurn = Math.round(nextSteps * 0.04);
+    const updatedDay: DailyEntry = {
+      ...todayEntry,
+      steps: nextSteps,
+      stepCaloriesBurned: stepBurn,
+      totalCaloriesBurned: (todayEntry.workoutCaloriesBurned || 0) + stepBurn,
+      updatedAt: new Date().toISOString(),
+    };
+    setStepsInput(nextSteps.toString());
+    await onUpdateTodayEntry(updatedDay);
+  };
+
+  const hasAnyDataToday =
+    todayEntry.meals.length > 0 ||
+    todayEntry.workouts.length > 0 ||
+    todayEntry.steps > 0 ||
+    todayEntry.waterMl > 0 ||
+    todayEntry.weight !== null;
+
   return (
     <div className="space-y-6 sm:space-y-8 animate-fadeIn">
-      {/* 1. Ultra-Clean Goal Architecture Banner (Apple/COS Aesthetic) */}
-      <section className="bg-white dark:bg-stone-900 rounded-2xl sm:rounded-3xl p-5 sm:p-7 border border-stone-200/70 dark:border-stone-800 shadow-xs">
+      {/* 1. Header Goal Architecture Banner */}
+      <section className="bg-white dark:bg-stone-900 rounded-2xl sm:rounded-3xl p-5 sm:p-7 border border-stone-200/80 dark:border-stone-800 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
           <div>
-            <div className="flex items-center gap-2 text-xs font-medium text-stone-500 dark:text-stone-400">
+            <div className="flex items-center gap-2 text-xs font-semibold text-stone-500 dark:text-stone-400">
               <span>Goal Architecture</span>
               <span aria-hidden="true">·</span>
-              <span>Age {profile.age}</span>
+              <span>{formatLocalDateString(todayEntry.date)}</span>
               <span aria-hidden="true">·</span>
-              <span>Height {profile.height}</span>
-              <span aria-hidden="true">·</span>
-              <span className="text-orange-600 dark:text-orange-400 font-semibold">{profile.pace}</span>
+              <span className="text-orange-600 dark:text-orange-400">
+                Pace: -{profile.weeklyLossPace} kg/wk
+              </span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-stone-900 dark:text-stone-100 mt-1">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-stone-900 dark:text-white mt-1">
               Target {profile.targetWeightKg} kg{' '}
               <span className="text-sm font-normal text-stone-500 dark:text-stone-400">
-                (Started: 106 kg · {kgToLose.toFixed(1)} kg remaining)
+                ({kgRemaining > 0 ? `${kgRemaining} kg to go` : 'Goal Reached!'})
               </span>
             </h1>
           </div>
 
-          {/* Current Weight Quick Check-In */}
-          <div className="flex items-center gap-3">
-            {isEditingWeight ? (
+          {/* Quick Check-In / Edit Profile buttons */}
+          <div className="flex items-center gap-2.5 flex-wrap">
+            {isLoggingWeight ? (
               <form onSubmit={handleSaveWeight} className="flex items-center gap-2">
                 <input
                   type="number"
                   step="0.1"
-                  value={newWeight}
-                  onChange={(e) => setNewWeight(e.target.value)}
-                  className="w-20 px-2.5 py-1.5 text-sm rounded-lg border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 text-stone-900 dark:text-stone-100 font-semibold"
+                  value={weightInput}
+                  onChange={(e) => setWeightInput(e.target.value)}
+                  className="w-20 px-2.5 py-1.5 text-xs font-bold rounded-lg border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 text-stone-900 dark:text-stone-100"
                   autoFocus
                 />
                 <span className="text-xs text-stone-500">kg</span>
@@ -109,236 +161,311 @@ export const SmartDashboard: React.FC<SmartDashboardProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsEditingWeight(false)}
-                  className="px-2 py-1.5 text-xs text-stone-500 hover:text-stone-700"
+                  onClick={() => setIsLoggingWeight(false)}
+                  className="px-2 py-1.5 text-xs text-stone-500"
                 >
-                  Cancel
+                  ✕
                 </button>
               </form>
             ) : (
               <button
-                onClick={() => setIsEditingWeight(true)}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-stone-100 dark:bg-stone-800 text-stone-800 dark:text-stone-200 hover:bg-stone-200 dark:hover:bg-stone-700 transition text-xs font-medium"
+                onClick={() => {
+                  setWeightInput(displayWeight.toString());
+                  setIsLoggingWeight(true);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-stone-100 dark:bg-stone-800 text-stone-800 dark:text-stone-200 hover:bg-stone-200 dark:hover:bg-stone-700 transition text-xs font-medium flex items-center gap-2"
               >
-                <span>Current:</span>
-                <span className="font-bold text-sm tabular-nums text-stone-900 dark:text-white">
-                  {profile.currentWeightKg} kg
-                </span>
-                <span className="text-stone-400 text-[10px]">✎</span>
+                <span>Today's Weight:</span>
+                <strong className="text-stone-900 dark:text-white tabular-nums">
+                  {displayWeight} kg
+                </strong>
+                <span className="text-[10px] text-stone-400">✎</span>
               </button>
             )}
+
+            <button
+              onClick={onOpenEditProfile}
+              className="px-3 py-2 rounded-xl border border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-400 hover:text-stone-900 text-xs font-medium transition"
+            >
+              Edit Profile
+            </button>
           </div>
         </div>
 
-        {/* Progress Bar towards 96kg */}
+        {/* Progress bar towards goal */}
         <div className="mt-5 space-y-1.5">
           <div className="flex justify-between text-xs text-stone-500 dark:text-stone-400">
-            <span>Progress to 96kg goal</span>
-            <span className="font-semibold text-stone-900 dark:text-stone-100 tabular-nums">
-              {progressPercent}% Complete
+            <span>Progress toward {profile.targetWeightKg} kg</span>
+            <span className="font-semibold text-stone-900 dark:text-white tabular-nums">
+              {displayWeight} kg / {profile.targetWeightKg} kg
             </span>
           </div>
           <div className="w-full h-2 rounded-full bg-stone-100 dark:bg-stone-800 overflow-hidden">
             <div
               className="h-full rounded-full bg-stone-900 dark:bg-stone-100 transition-all duration-700"
-              style={{ width: `${Math.max(5, progressPercent)}%` }}
+              style={{
+                width: `${Math.max(
+                  4,
+                  Math.min(
+                    100,
+                    100 - (kgRemaining / Math.max(1, profile.currentWeightKg - profile.targetWeightKg)) * 100
+                  )
+                )}%`,
+              }}
             />
           </div>
         </div>
       </section>
 
-      {/* 2. Core Dashboard Grid: Progress Ring & Health Metrics */}
+      {/* 2. Core Dashboard Grid: Progress Ring & Real Today's Metrics */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left: Dynamic Concentric Ring Card (Apple Fitness Style) */}
-        <section className="lg:col-span-5 bg-white dark:bg-stone-900 rounded-2xl sm:rounded-3xl p-6 sm:p-7 border border-stone-200/70 dark:border-stone-800 shadow-xs flex flex-col items-center justify-between">
-          <div className="w-full flex items-center justify-between mb-4">
+        {/* Left: Concentric Progress Ring */}
+        <section className="lg:col-span-5 bg-white dark:bg-stone-900 rounded-2xl sm:rounded-3xl p-6 sm:p-7 border border-stone-200/80 dark:border-stone-800 shadow-xs flex flex-col items-center justify-between">
+          <div className="w-full flex items-center justify-between mb-2">
             <div>
-              <h2 className="text-base font-bold text-stone-900 dark:text-stone-100">Daily Health Rings</h2>
-              <p className="text-xs text-stone-500 dark:text-stone-400">Calories & Steps Synchronization</p>
+              <h2 className="text-base font-bold text-stone-900 dark:text-white">Daily Progress Rings</h2>
+              <p className="text-xs text-stone-500 dark:text-stone-400">Real Logged Calories & Activity</p>
             </div>
-            <span className="text-[11px] font-medium text-stone-400 dark:text-stone-500">
-              Today
-            </span>
+            <span className="text-xs font-mono text-stone-400">{todayEntry.date}</span>
           </div>
 
           <div className="py-2">
             <ProgressRing
-              caloriesConsumed={totalCaloriesConsumed}
-              calorieTarget={profile.dailyCalorieTarget}
-              caloriesBurned={totalCaloriesBurned}
-              burnedTarget={750}
-              steps={healthData.steps}
-              stepGoal={profile.dailyStepGoal}
+              caloriesConsumed={consumed}
+              calorieTarget={target}
+              caloriesBurned={burned}
+              burnedTarget={500}
+              steps={todayEntry.steps}
+              stepGoal={profile.dailyStepGoal || 10000}
               size={260}
             />
           </div>
 
-          {/* Quick status footer */}
-          <div className="w-full mt-5 pt-4 border-t border-stone-100 dark:border-stone-800/80 flex items-center justify-between text-xs">
-            <span className="text-stone-500 dark:text-stone-400">Deficit Goal (1.5kg/wk)</span>
-            <span className={`font-bold tabular-nums ${currentDeficit >= targetDailyDeficit ? 'text-emerald-600 dark:text-emerald-400' : 'text-stone-900 dark:text-stone-100'}`}>
-              {currentDeficit > 0 ? `-${currentDeficit} kcal` : `+${Math.abs(currentDeficit)} kcal`}
+          {/* Ring footer explanation */}
+          <div className="w-full mt-4 pt-4 border-t border-stone-100 dark:border-stone-800 flex items-center justify-between text-xs">
+            <span className="text-stone-500 dark:text-stone-400">Daily Calorie Budget</span>
+            <span className={`font-bold tabular-nums ${remainingCalories < 0 ? 'text-rose-600' : 'text-stone-900 dark:text-white'}`}>
+              {remainingCalories >= 0 ? `${remainingCalories} kcal left` : `${Math.abs(remainingCalories)} kcal over target`}
             </span>
           </div>
         </section>
 
-        {/* Right: Metrics Overview & Google Health Sync Card */}
+        {/* Right: Real Metrics Cards & Actions */}
         <div className="lg:col-span-7 space-y-6">
-          {/* 3 Metric Summary Cards */}
+          {/* 3 Metric Cards */}
           <div className="grid grid-cols-3 gap-3 sm:gap-4">
-            <div className="bg-white dark:bg-stone-900 rounded-2xl p-4 border border-stone-200/70 dark:border-stone-800 shadow-xs">
-              <span className="text-[11px] font-medium text-stone-500 dark:text-stone-400 uppercase tracking-wider block">
-                Steps Synced
+            <div
+              onClick={() => onNavigateTab('nutrition')}
+              className="bg-white dark:bg-stone-900 rounded-2xl p-4 border border-stone-200/80 dark:border-stone-800 shadow-xs cursor-pointer hover:border-stone-300 dark:hover:border-stone-700 transition"
+            >
+              <span className="text-[11px] font-medium text-stone-500 uppercase tracking-wider block">
+                Consumed
               </span>
-              <span className="text-xl sm:text-2xl font-extrabold text-stone-900 dark:text-stone-100 tabular-nums mt-1 block">
-                {healthData.steps.toLocaleString()}
+              <span className="text-xl sm:text-2xl font-extrabold text-stone-900 dark:text-white tabular-nums mt-1 block">
+                {consumed} <span className="text-xs font-normal text-stone-400">kcal</span>
               </span>
-              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
-                {Math.round((healthData.steps / profile.dailyStepGoal) * 100)}% of 10k
+              <span className="text-[11px] text-stone-400 mt-0.5 block">
+                {todayEntry.meals.length} {todayEntry.meals.length === 1 ? 'meal' : 'meals'} logged
               </span>
             </div>
 
-            <div className="bg-white dark:bg-stone-900 rounded-2xl p-4 border border-stone-200/70 dark:border-stone-800 shadow-xs">
-              <span className="text-[11px] font-medium text-stone-500 dark:text-stone-400 uppercase tracking-wider block">
+            <div
+              onClick={() => onNavigateTab('workouts')}
+              className="bg-white dark:bg-stone-900 rounded-2xl p-4 border border-stone-200/80 dark:border-stone-800 shadow-xs cursor-pointer hover:border-stone-300 dark:hover:border-stone-700 transition"
+            >
+              <span className="text-[11px] font-medium text-stone-500 uppercase tracking-wider block">
                 Burned (Active)
               </span>
-              <span className="text-xl sm:text-2xl font-extrabold text-stone-900 dark:text-stone-100 tabular-nums mt-1 block">
-                {totalCaloriesBurned}
+              <span className="text-xl sm:text-2xl font-extrabold text-orange-600 dark:text-orange-400 tabular-nums mt-1 block">
+                {burned} <span className="text-xs font-normal text-stone-400">kcal</span>
               </span>
-              <span className="text-[11px] text-orange-600 dark:text-orange-400 font-medium">
-                Workouts + Walk
+              <span className="text-[11px] text-stone-400 mt-0.5 block">
+                {todayEntry.workouts.length} workout{todayEntry.workouts.length === 1 ? '' : 's'} + steps
               </span>
             </div>
 
-            <div className="bg-white dark:bg-stone-900 rounded-2xl p-4 border border-stone-200/70 dark:border-stone-800 shadow-xs">
-              <span className="text-[11px] font-medium text-stone-500 dark:text-stone-400 uppercase tracking-wider block">
-                Distance
+            <div
+              onClick={() => setIsEditingSteps(true)}
+              className="bg-white dark:bg-stone-900 rounded-2xl p-4 border border-stone-200/80 dark:border-stone-800 shadow-xs cursor-pointer hover:border-stone-300 dark:hover:border-stone-700 transition"
+            >
+              <span className="text-[11px] font-medium text-stone-500 uppercase tracking-wider block">
+                Steps Today
               </span>
-              <span className="text-xl sm:text-2xl font-extrabold text-stone-900 dark:text-stone-100 tabular-nums mt-1 block">
-                {healthData.distanceKm} <span className="text-xs font-normal text-stone-400">km</span>
+              <span className="text-xl sm:text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums mt-1 block">
+                {todayEntry.steps.toLocaleString()}
               </span>
-              <span className="text-[11px] text-stone-500 dark:text-stone-400">
-                GPS + Pedometer
+              <span className="text-[11px] text-stone-400 mt-0.5 block">
+                Goal: {(profile.dailyStepGoal || 10000).toLocaleString()}
               </span>
             </div>
           </div>
 
-          {/* Google Health API & OAuth 2.0 Integration Panel */}
-          <section className="bg-white dark:bg-stone-900 rounded-2xl sm:rounded-3xl p-5 sm:p-6 border border-stone-200/70 dark:border-stone-800 shadow-xs">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-stone-100 dark:border-stone-800">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/60 flex items-center justify-center text-emerald-600">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-stone-900 dark:text-stone-100">
-                    Google Health API
-                  </h3>
-                  <div className="flex items-center gap-2 text-[11px] text-stone-500 dark:text-stone-400">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                    <span>OAuth 2.0 Connected</span>
-                    <span>·</span>
-                    <span>Synced {new Date(healthData.lastSyncTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                  </div>
-                </div>
+          {/* Quick Steps Entry Dialog / Bar */}
+          {isEditingSteps && (
+            <div className="p-4 rounded-2xl bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 shadow-xs animate-fadeIn">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold text-stone-900 dark:text-white">Update Today's Steps</span>
+                <button onClick={() => setIsEditingSteps(false)} className="text-xs text-stone-400">✕</button>
               </div>
-
-              <div className="flex items-center gap-2">
+              <form onSubmit={handleSaveSteps} className="flex items-center gap-3">
+                <input
+                  type="number"
+                  min="0"
+                  max="100000"
+                  value={stepsInput}
+                  onChange={(e) => setStepsInput(e.target.value)}
+                  className="flex-1 px-3 py-2 rounded-xl border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 text-sm font-semibold tabular-nums"
+                  placeholder="e.g. 7500"
+                  autoFocus
+                />
                 <button
-                  onClick={onSyncHealth}
-                  className="px-3 py-1.5 rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 text-stone-800 dark:text-stone-200 hover:bg-stone-100 text-xs font-semibold transition"
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900 text-xs font-semibold"
                 >
-                  ↻ Sync Now
+                  Save Steps
+                </button>
+              </form>
+              <div className="flex items-center gap-2 mt-3">
+                <span className="text-[11px] text-stone-400">Quick add:</span>
+                <button
+                  type="button"
+                  onClick={() => handleQuickAddSteps(500)}
+                  className="px-2.5 py-1 rounded-lg bg-stone-100 dark:bg-stone-800 text-xs font-medium text-stone-700 dark:text-stone-300"
+                >
+                  +500
                 </button>
                 <button
-                  onClick={() => setShowOAuthConfig(!showOAuthConfig)}
-                  className="px-2.5 py-1.5 rounded-lg border border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-400 hover:text-stone-900 text-xs transition"
+                  type="button"
+                  onClick={() => handleQuickAddSteps(1000)}
+                  className="px-2.5 py-1 rounded-lg bg-stone-100 dark:bg-stone-800 text-xs font-medium text-stone-700 dark:text-stone-300"
                 >
-                  OAuth Info
-                </button>
-              </div>
-            </div>
-
-            {/* Inactivity & Movement Alert Monitor */}
-            <div className="mt-4 p-3.5 rounded-xl bg-stone-50 dark:bg-stone-800/60 border border-stone-200/60 dark:border-stone-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <span className="text-xs font-bold text-stone-800 dark:text-stone-200 block">
-                  Hourly Activity Monitor
-                </span>
-                <span className="text-[11px] text-stone-500 dark:text-stone-400">
-                  Last hour: <strong className="tabular-nums">{healthData.lastHourSteps}</strong> steps{' '}
-                  {healthData.lastHourSteps < 250 ? (
-                    <span className="text-rose-600 dark:text-rose-400 font-medium">(&lt; 250 steps threshold - alert active)</span>
-                  ) : (
-                    <span className="text-emerald-600 font-medium">(Movement goal met)</span>
-                  )}
-                </span>
-              </div>
-
-              {/* Simulation / Testing Buttons */}
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={() => onAddSteps(500)}
-                  className="px-2.5 py-1 rounded-md bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900 text-[11px] font-medium hover:opacity-90 transition whitespace-nowrap"
-                  title="Simulate adding a 500-step brisk walk"
-                >
-                  +500 Walk Steps
+                  +1,000
                 </button>
                 <button
-                  onClick={onSimulateInactivity}
-                  className="px-2.5 py-1 rounded-md border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 text-[11px] font-medium hover:bg-stone-100 dark:hover:bg-stone-700 transition whitespace-nowrap"
-                  title="Simulate < 250 steps to trigger Movement push notification"
+                  type="button"
+                  onClick={() => handleQuickAddSteps(2500)}
+                  className="px-2.5 py-1 rounded-lg bg-stone-100 dark:bg-stone-800 text-xs font-medium text-stone-700 dark:text-stone-300"
                 >
-                  Test Stagnant &lt;250
+                  +2,500
                 </button>
               </div>
             </div>
+          )}
 
-            {/* OAuth Details Dropdown */}
-            {showOAuthConfig && (
-              <div className="mt-3 p-3 rounded-lg bg-stone-100 dark:bg-stone-800 text-[11px] font-mono text-stone-700 dark:text-stone-300 space-y-1">
-                <div>Endpoint: https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate</div>
-                <div>Scopes: fitness.activity.read, fitness.body.read, fitness.location.read</div>
-                <div>OAuth 2.0 Auth State: Authorized & Token refreshed</div>
-              </div>
-            )}
-          </section>
-
-          {/* Hydration Tracker Card */}
-          <section className="bg-white dark:bg-stone-900 rounded-2xl sm:rounded-3xl p-5 border border-stone-200/70 dark:border-stone-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          {/* Hydration Tracker */}
+          <section className="bg-white dark:bg-stone-900 rounded-2xl sm:rounded-3xl p-5 border border-stone-200/80 dark:border-stone-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-base font-bold text-stone-900 dark:text-stone-100">Hydration Engine</span>
-                <span className="text-xs text-stone-500 tabular-nums">({waterMl} / {profile.dailyWaterGoalMl} ml)</span>
+                <span className="text-base font-bold text-stone-900 dark:text-white">Hydration</span>
+                <span className="text-xs text-stone-500 tabular-nums">
+                  ({todayEntry.waterMl || 0} / {profile.dailyWaterGoalMl || 3000} ml)
+                </span>
               </div>
               <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5">
-                Target 3 Liters daily to support aggressive fat metabolism.
+                Target: {profile.dailyWaterGoalMl || 3000} ml to support metabolic fat burn.
               </p>
-              <div className="w-48 sm:w-60 h-2 bg-stone-100 dark:bg-stone-800 rounded-full mt-2 overflow-hidden">
+              <div className="w-48 sm:w-60 h-2 bg-stone-100 dark:bg-stone-800 rounded-full mt-2.5 overflow-hidden">
                 <div
                   className="h-full bg-cyan-600 dark:bg-cyan-500 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(100, (waterMl / profile.dailyWaterGoalMl) * 100)}%` }}
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.round(((todayEntry.waterMl || 0) / (profile.dailyWaterGoalMl || 3000)) * 100)
+                    )}%`,
+                  }}
                 />
               </div>
             </div>
 
             <div className="flex items-center gap-2">
               <button
-                onClick={() => onAddWater(250)}
+                onClick={() => handleAddWater(250)}
                 className="px-3.5 py-2 rounded-xl bg-cyan-50 dark:bg-cyan-950/40 text-cyan-800 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800 text-xs font-semibold hover:bg-cyan-100 transition whitespace-nowrap"
               >
                 +250 ml Glass
               </button>
               <button
-                onClick={() => onAddWater(500)}
+                onClick={() => handleAddWater(500)}
                 className="px-3.5 py-2 rounded-xl bg-stone-100 dark:bg-stone-800 text-stone-800 dark:text-stone-200 text-xs font-semibold hover:bg-stone-200 dark:hover:bg-stone-700 transition whitespace-nowrap"
               >
                 +500 ml Bottle
               </button>
             </div>
           </section>
+
+          {/* Formula Transparency Card (Mifflin-St Jeor) */}
+          <section className="bg-white dark:bg-stone-900 rounded-2xl sm:rounded-3xl p-5 sm:p-6 border border-stone-200/80 dark:border-stone-800 shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-stone-900 dark:text-white">
+                Mifflin-St Jeor Metabolic Formula
+              </h3>
+              <span className="text-[11px] text-stone-400 font-mono">Calibrated to your stats</span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+              <div className="p-3 rounded-xl bg-stone-50 dark:bg-stone-800/60 border border-stone-200/60 dark:border-stone-700/60">
+                <span className="text-[10px] text-stone-400 block uppercase font-bold">1. BMR</span>
+                <span className="text-base font-extrabold text-stone-900 dark:text-white tabular-nums mt-0.5 block">
+                  {profile.bmr} <span className="text-[10px] font-normal text-stone-400">kcal</span>
+                </span>
+                <span className="text-[10px] text-stone-500">Resting baseline</span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-stone-50 dark:bg-stone-800/60 border border-stone-200/60 dark:border-stone-700/60">
+                <span className="text-[10px] text-stone-400 block uppercase font-bold">2. TDEE</span>
+                <span className="text-base font-extrabold text-stone-900 dark:text-white tabular-nums mt-0.5 block">
+                  {profile.tdee} <span className="text-[10px] font-normal text-stone-400">kcal</span>
+                </span>
+                <span className="text-[10px] text-stone-500">Maintenance</span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-stone-50 dark:bg-stone-800/60 border border-stone-200/60 dark:border-stone-700/60">
+                <span className="text-[10px] text-stone-400 block uppercase font-bold">3. Deficit</span>
+                <span className="text-base font-extrabold text-rose-600 dark:text-rose-400 tabular-nums mt-0.5 block">
+                  -{profile.dailyCalorieDeficit} <span className="text-[10px] font-normal text-stone-400">kcal</span>
+                </span>
+                <span className="text-[10px] text-stone-500">-{profile.weeklyLossPace} kg/wk</span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-stone-50 dark:bg-stone-800/60 border border-stone-200/60 dark:border-stone-700/60">
+                <span className="text-[10px] text-stone-400 block uppercase font-bold">4. Daily Target</span>
+                <span className="text-base font-extrabold text-stone-900 dark:text-white tabular-nums mt-0.5 block">
+                  {profile.dailyCalorieTarget} <span className="text-[10px] font-normal text-stone-400">kcal</span>
+                </span>
+                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">Max intake</span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-stone-500 dark:text-stone-400 leading-relaxed pt-1">
+              Based on your age ({profile.age}), height ({profile.heightCm} cm), current weight ({profile.currentWeightKg} kg), and {profile.activityLevel} activity.
+            </p>
+          </section>
+
+          {/* Empty state alert if no entries yet */}
+          {!hasAnyDataToday && (
+            <div className="p-4 rounded-2xl bg-stone-50 dark:bg-stone-850 border border-dashed border-stone-300 dark:border-stone-700 text-center space-y-2">
+              <span className="text-xs font-semibold text-stone-700 dark:text-stone-300 block">
+                Fresh Day Started ({formatLocalDateString(todayEntry.date)})
+              </span>
+              <p className="text-xs text-stone-500 dark:text-stone-400 max-w-sm mx-auto">
+                No meals or workouts logged yet today. Tap below to log your first breakfast or activity.
+              </p>
+              <div className="flex items-center justify-center gap-3 pt-2">
+                <button
+                  onClick={() => onNavigateTab('nutrition')}
+                  className="px-3.5 py-1.5 rounded-xl bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900 text-xs font-semibold"
+                >
+                  + Log First Meal
+                </button>
+                <button
+                  onClick={() => onNavigateTab('workouts')}
+                  className="px-3.5 py-1.5 rounded-xl border border-stone-300 dark:border-stone-600 text-xs font-semibold text-stone-800 dark:text-stone-200"
+                >
+                  + Log Workout
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

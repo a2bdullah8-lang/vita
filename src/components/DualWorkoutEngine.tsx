@@ -206,8 +206,8 @@ export const DualWorkoutEngine: React.FC<DualWorkoutEngineProps> = ({
 
   const handleFinishHomeWorkout = () => {
     const completedList = currentPlan.exercises
-      .filter((e) => completedExercises[e.id])
-      .map((e) => e.name);
+      .filter((e: any) => completedExercises[e.id])
+      .map((e: any) => e.name);
 
     const log: WorkoutLog = {
       id: `w_home_${Date.now()}`,
@@ -217,7 +217,7 @@ export const DualWorkoutEngine: React.FC<DualWorkoutEngineProps> = ({
       targetMuscles: currentPlan.focusMuscles,
       durationMinutes: Math.max(1, Math.round(workoutElapsedSeconds / 60)) || currentPlan.estimatedDurationMin,
       caloriesBurned: currentPlan.targetCaloriesBurn,
-      exercisesCompleted: completedList.length > 0 ? completedList : currentPlan.exercises.map((e) => e.name),
+      exercisesCompleted: completedList.length > 0 ? completedList : currentPlan.exercises.map((e: any) => e.name),
       notes: `Home guided session with ${currentPlan.equipment.join(', ')}.`,
       timestamp: new Date().toISOString(),
       createdAt: new Date().toISOString(),
@@ -426,7 +426,7 @@ export const DualWorkoutEngine: React.FC<DualWorkoutEngineProps> = ({
               {/* Equipment Tags (Clean unboxed text) */}
               <div className="flex items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
                 <span>Gear:</span>
-                {currentPlan.equipment.map((eq, i) => (
+                {currentPlan.equipment.map((eq: string, i: number) => (
                   <React.Fragment key={eq}>
                     <span className="font-medium text-stone-700 dark:text-stone-300">{eq}</span>
                     {i < currentPlan.equipment.length - 1 && <span>·</span>}
@@ -437,7 +437,7 @@ export const DualWorkoutEngine: React.FC<DualWorkoutEngineProps> = ({
 
             {/* Exercise List */}
             <div className="mt-5 space-y-3">
-              {currentPlan.exercises.map((ex, index) => {
+              {currentPlan.exercises.map((ex: any, index: number) => {
                 const isDone = !!completedExercises[ex.id];
                 return (
                   <div

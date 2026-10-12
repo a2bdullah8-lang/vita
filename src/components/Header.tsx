@@ -3,14 +3,15 @@ import { PWAInstallButton } from './PWAInstallButton';
 import { User } from 'firebase/auth';
 
 interface HeaderProps {
-  activeTab: 'dashboard' | 'workouts' | 'nutrition' | 'reminders';
-  setActiveTab: (tab: 'dashboard' | 'workouts' | 'nutrition' | 'reminders') => void;
+  activeTab: 'dashboard' | 'workouts' | 'nutrition' | 'reports' | 'reminders';
+  setActiveTab: (tab: 'dashboard' | 'workouts' | 'nutrition' | 'reports' | 'reminders') => void;
   theme: 'light' | 'dark';
   setTheme: (theme: 'light' | 'dark') => void;
   user: User | null;
   onLogin: () => void;
   onLogout: () => void;
   openSosModal: () => void;
+  onOpenSettings?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -22,6 +23,7 @@ export const Header: React.FC<HeaderProps> = ({
   onLogin,
   onLogout,
   openSosModal,
+  onOpenSettings,
 }) => {
   return (
     <header className="sticky top-0 z-40 w-full backdrop-blur-md bg-[#FCFBF9]/90 dark:bg-[#121110]/90 border-b border-stone-200/80 dark:border-stone-800 transition-colors">
@@ -41,8 +43,8 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         </div>
 
-        {/* Zone 2: 4 single-line nav links (desktop) */}
-        <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-stone-600 dark:text-stone-300">
+        {/* Zone 2: 5 single-line nav links (desktop) */}
+        <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-stone-600 dark:text-stone-300">
           <button
             onClick={() => setActiveTab('dashboard')}
             className={`whitespace-nowrap transition-colors pb-0.5 border-b-2 ${
@@ -52,6 +54,16 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             Dashboard
+          </button>
+          <button
+            onClick={() => setActiveTab('nutrition')}
+            className={`whitespace-nowrap transition-colors pb-0.5 border-b-2 ${
+              activeTab === 'nutrition'
+                ? 'text-stone-900 dark:text-white border-stone-900 dark:border-white font-semibold'
+                : 'border-transparent hover:text-stone-900 dark:hover:text-white'
+            }`}
+          >
+            Nutrition
           </button>
           <button
             onClick={() => setActiveTab('workouts')}
@@ -64,14 +76,14 @@ export const Header: React.FC<HeaderProps> = ({
             Workouts
           </button>
           <button
-            onClick={() => setActiveTab('nutrition')}
+            onClick={() => setActiveTab('reports')}
             className={`whitespace-nowrap transition-colors pb-0.5 border-b-2 ${
-              activeTab === 'nutrition'
+              activeTab === 'reports'
                 ? 'text-stone-900 dark:text-white border-stone-900 dark:border-white font-semibold'
                 : 'border-transparent hover:text-stone-900 dark:hover:text-white'
             }`}
           >
-            Nutrition
+            Reports
           </button>
           <button
             onClick={() => setActiveTab('reminders')}
@@ -85,19 +97,30 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         </nav>
 
-        {/* Zone 3: Actions (PWA install, Theme toggle, SOS Coach, Auth) */}
-        <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+        {/* Zone 3: Actions (PWA install, Theme toggle, SOS Coach, Settings, Auth) */}
+        <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
           <PWAInstallButton />
 
           {/* SOS Coach Quick Trigger */}
           <button
             onClick={openSosModal}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200/80 dark:border-rose-900/50 text-xs font-semibold hover:bg-rose-100 transition whitespace-nowrap shadow-xs"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200/80 dark:border-rose-900/50 text-xs font-semibold hover:bg-rose-100 dark:hover:bg-rose-900/40 transition whitespace-nowrap shadow-xs"
             title="AI Craving Crusher Coach"
           >
-            <span className="w-2 h-2 rounded-full bg-rose-500" />
+            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
             <span>SOS Coach</span>
           </button>
+
+          {/* Settings / Profile Button */}
+          {user && onOpenSettings && (
+            <button
+              onClick={onOpenSettings}
+              className="px-2.5 py-1.5 rounded-xl border border-stone-200 dark:border-stone-800 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 transition text-xs font-medium"
+              title="Edit Profile & Goal Architecture"
+            >
+              Settings
+            </button>
+          )}
 
           {/* Dark / Light Toggle */}
           <button
@@ -112,12 +135,12 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Firebase Authentication state */}
           {user ? (
             <div className="flex items-center gap-2">
-              <span className="hidden sm:inline text-xs text-stone-600 dark:text-stone-400 max-w-[90px] truncate">
+              <span className="hidden lg:inline text-xs text-stone-500 dark:text-stone-400 max-w-[90px] truncate">
                 {user.displayName || user.email?.split('@')[0]}
               </span>
               <button
                 onClick={onLogout}
-                className="px-2.5 py-1 text-xs text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-white"
+                className="px-2 py-1 text-xs text-stone-500 hover:text-stone-900 dark:text-stone-400 dark:hover:text-white"
               >
                 Sign out
               </button>

@@ -87,11 +87,46 @@ Vercel will run `npm run build` and deploy the SPA using the pre-configured `ver
 
 ---
 
+## Firestore Security Rules
+
+To ensure each user can read and write only their own data (`users/{uid}/**`), copy and paste the following rules into the **Firebase Console -> Firestore Database -> Rules** tab:
+
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+
+      match /{allSubcollections=**} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+  }
+}
+```
+
+---
+
 ## Tech Stack
 
 - **Framework:** React 19, TypeScript
 - **Bundler:** Vite 8, `vite-plugin-pwa`
 - **Styling:** Tailwind CSS v4
-- **AI Model:** Google Gemini (`@google/genai`, `gemini-2.5-flash`)
+- **AI Model:** Google Gemini (`gemini-2.5-flash`)
 - **Speech & Audio:** Web Speech API (`window.speechSynthesis`) + Web Audio API (`AudioContext`)
-- **Database & Auth:** Firebase Firestore & Firebase Auth (with offline fallback)
+- **Database & Auth:** Firebase Firestore & Firebase Auth (with offline indexedDB persistence)
+

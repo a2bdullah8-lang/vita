@@ -2,114 +2,87 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "User profile with body stats and weight loss goal architecture",
+      "description": "User profile with calculated BMR, TDEE, deficit, and weight goals",
       "type": "object",
       "properties": {
-        "uid": { "type": "string", "maxLength": 128 },
-        "email": { "type": "string", "maxLength": 128 },
-        "displayName": { "type": "string", "maxLength": 100 },
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
         "age": { "type": "number" },
-        "height": { "type": "string", "maxLength": 20 },
+        "gender": { "type": "string", "enum": ["male", "female", "other"] },
+        "heightCm": { "type": "number" },
         "currentWeightKg": { "type": "number" },
         "targetWeightKg": { "type": "number" },
-        "pace": { "type": "string", "maxLength": 50 },
+        "activityLevel": { "type": "string" },
+        "weeklyLossPace": { "type": "number" },
+        "dietType": { "type": "string" },
+        "workoutDaysPerWeek": { "type": "number" },
+        "bmr": { "type": "number" },
+        "tdee": { "type": "number" },
+        "dailyCalorieDeficit": { "type": "number" },
         "dailyCalorieTarget": { "type": "number" },
-        "dailyStepGoal": { "type": "number" },
+        "dailyProteinTarget": { "type": "number" },
         "dailyWaterGoalMl": { "type": "number" },
+        "dailyStepGoal": { "type": "number" },
+        "onboardingCompleted": { "type": "boolean" },
         "themeMode": { "type": "string", "enum": ["light", "dark"] },
-        "updatedAt": { "type": "string", "maxLength": 64 }
+        "updatedAt": { "type": "string" }
       },
       "required": ["uid", "currentWeightKg", "targetWeightKg"]
     },
-    "MealLog": {
-      "title": "MealLog",
-      "description": "Logged nutrition item with calories and protein",
+    "DailyEntry": {
+      "title": "DailyEntry",
+      "description": "Daily tracking document stored at users/{uid}/days/{YYYY-MM-DD}",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "maxLength": 128 },
-        "userId": { "type": "string", "maxLength": 128 },
-        "name": { "type": "string", "maxLength": 100 },
-        "calories": { "type": "number" },
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "caloriesConsumed": { "type": "number" },
         "proteinGrams": { "type": "number" },
         "carbsGrams": { "type": "number" },
         "fatGrams": { "type": "number" },
-        "mealType": { "type": "string", "maxLength": 30 },
-        "timestamp": { "type": "string", "maxLength": 64 },
-        "createdAt": { "type": "string", "maxLength": 64 }
-      },
-      "required": ["id", "userId", "name", "calories", "proteinGrams"]
-    },
-    "WorkoutLog": {
-      "title": "WorkoutLog",
-      "description": "Workout session completed either via Home guided engine or Gym manual logger",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string", "maxLength": 128 },
-        "userId": { "type": "string", "maxLength": 128 },
-        "mode": { "type": "string", "maxLength": 20 },
-        "dayName": { "type": "string", "maxLength": 100 },
-        "targetMuscles": { "type": "string", "maxLength": 120 },
-        "durationMinutes": { "type": "number" },
-        "caloriesBurned": { "type": "number" },
-        "exercisesCompleted": { "type": "array" },
-        "notes": { "type": "string", "maxLength": 500 },
-        "timestamp": { "type": "string", "maxLength": 64 },
-        "createdAt": { "type": "string", "maxLength": 64 }
-      },
-      "required": ["id", "userId", "mode", "caloriesBurned"]
-    },
-    "DailyHealthLog": {
-      "title": "DailyHealthLog",
-      "description": "Daily metrics synced from Google Health or manually updated",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string", "maxLength": 128 },
-        "userId": { "type": "string", "maxLength": 128 },
-        "date": { "type": "string", "maxLength": 30 },
+        "meals": { "type": "array" },
+        "workouts": { "type": "array" },
+        "workoutCaloriesBurned": { "type": "number" },
         "steps": { "type": "number" },
-        "activeCalories": { "type": "number" },
-        "distanceKm": { "type": "number" },
-        "waterConsumedMl": { "type": "number" },
-        "lastStepSyncTime": { "type": "string", "maxLength": 64 },
-        "hourlySteps": { "type": "array" },
-        "syncedSource": { "type": "string", "maxLength": 30 },
-        "updatedAt": { "type": "string", "maxLength": 64 }
+        "stepCaloriesBurned": { "type": "number" },
+        "totalCaloriesBurned": { "type": "number" },
+        "waterMl": { "type": "number" },
+        "weight": { "type": "number" },
+        "note": { "type": "string" },
+        "updatedAt": { "type": "string" }
       },
-      "required": ["id", "userId", "date", "steps", "activeCalories"]
+      "required": ["id", "userId", "date"]
     },
-    "SosChatMessage": {
-      "title": "SosChatMessage",
-      "description": "Craving crusher coach chat thread or message",
+    "UserReminder": {
+      "title": "UserReminder",
+      "description": "User created reminder schedule",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "maxLength": 128 },
-        "userId": { "type": "string", "maxLength": 128 },
-        "messages": { "type": "array" },
-        "updatedAt": { "type": "string", "maxLength": 64 }
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "type": { "type": "string" },
+        "time": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "createdAt": { "type": "string" }
       },
-      "required": ["id", "userId", "messages"]
+      "required": ["id", "userId", "title", "time"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "UserProfile",
-      "description": "User profile with goal metrics and preferences"
+      "description": "User profile, goals, BMR, and settings"
     },
-    "/users/{userId}/meals/{mealId}": {
-      "schema": "MealLog",
-      "description": "Logged meals with calories and macronutrients"
+    "/users/{userId}/days/{dayId}": {
+      "schema": "DailyEntry",
+      "description": "Daily tracking documents indexed by local date YYYY-MM-DD"
     },
-    "/users/{userId}/workouts/{workoutId}": {
-      "schema": "WorkoutLog",
-      "description": "Home and gym workout history"
-    },
-    "/users/{userId}/dailyHealthLogs/{dateId}": {
-      "schema": "DailyHealthLog",
-      "description": "Daily step and active calorie logs from Google Health API sync"
-    },
-    "/users/{userId}/sosChats/{chatId}": {
-      "schema": "SosChatMessage",
-      "description": "Craving Crusher motivation conversations"
+    "/users/{userId}/reminders/{reminderId}": {
+      "schema": "UserReminder",
+      "description": "User custom reminders for hydration, meals, and workouts"
     }
   }
 }

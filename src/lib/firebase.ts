@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getAuth,
   GoogleAuthProvider,
@@ -9,8 +9,10 @@ import {
 } from 'firebase/auth';
 import {
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   doc,
-  getDocFromServer,
   getDoc,
   setDoc,
   collection,
@@ -19,29 +21,59 @@ import {
   query,
   orderBy,
   limit,
+  where,
+  Firestore,
 } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
-import { UserProfile, MealItem, WorkoutLog, DailyHealthLog, ChatMessage } from '../types';
+import bundledConfig from '../../firebase-applet-config.json';
+import { UserProfile, DailyEntry, UserReminder, MealItem, WorkoutEntry } from '../types';
+import { getLocalDateKey } from './calculations';
 
-// Resolve configuration from environment variables or bundled config
-const resolvedConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || firebaseConfig?.apiKey || '',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfig?.authDomain || '',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || firebaseConfig?.projectId || '',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfig?.storageBucket || '',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfig?.messagingSenderId || '',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfig?.appId || '',
+// 1. Resolve configuration from VITE_FIREBASE_* environment variables or fallback to bundled config
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || bundledConfig?.apiKey || '',
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || bundledConfig?.authDomain || '',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || bundledConfig?.projectId || '',
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || bundledConfig?.storageBucket || '',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || bundledConfig?.messagingSenderId || '',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || bundledConfig?.appId || '',
 };
 
-// Initialize Firebase
-const app = initializeApp(resolvedConfig);
-const firestoreDbId = import.meta.env.VITE_FIREBASE_DATABASE_ID || firebaseConfig?.firestoreDatabaseId;
-export const db = firestoreDbId && firestoreDbId !== '(default)'
-  ? getFirestore(app, firestoreDbId)
-  : getFirestore(app);
+// Database ID: read from VITE_FIREBASE_DATABASE_ID or bundled config (defaults to '(default)')
+const targetDatabaseId =
+  import.meta.env.VITE_FIREBASE_DATABASE_ID ||
+  bundledConfig?.firestoreDatabaseId ||
+  'ai-studio-vitaaesthetichea-c2dbe61c-f336-4c5b-9f24-1bd8a3116b9b' ||
+  '(default)';
+
+// Initialize Firebase App
+const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+
+// Initialize Firestore with Offline IndexedDB Persistence
+let firestoreInstance: Firestore;
+try {
+  firestoreInstance = initializeFirestore(
+    app,
+    {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    },
+    targetDatabaseId !== '(default)' ? targetDatabaseId : undefined
+  );
+} catch {
+  // If already initialized or persistent cache unsupported, fallback to standard getFirestore
+  firestoreInstance =
+    targetDatabaseId !== '(default)'
+      ? getFirestore(app, targetDatabaseId)
+      : getFirestore(app);
+}
+
+export const db = firestoreInstance;
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
 
+// Error handling conforming to Firebase Integration Skill
 export enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',
@@ -60,11 +92,6 @@ export interface FirestoreErrorInfo {
     email?: string | null;
     emailVerified?: boolean | null;
     isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
   };
 }
 
@@ -76,276 +103,227 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
       email: auth.currentUser?.email,
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo:
-        auth.currentUser?.providerData?.map((p) => ({
-          providerId: p.providerId,
-          email: p.email,
-        })) || [],
     },
     operationType,
     path,
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  console.error('Firestore Error:', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Initial connection check
-export async function testConnection(): Promise<boolean> {
+// -------------------------------------------------------------
+// PROFILE PERSISTENCE (users/{uid}/profile or users/{uid})
+// -------------------------------------------------------------
+
+export async function loadUserProfile(uid: string): Promise<UserProfile | null> {
+  const path = `users/${uid}`;
   try {
-    return Boolean(db);
-  } catch (error) {
-    console.warn('Firebase connection check warning:', error);
-    return false;
+    const snap = await getDoc(doc(db, 'users', uid));
+    if (snap.exists()) {
+      return snap.data() as UserProfile;
+    }
+    // Also check subcollection users/{uid}/profile/main just in case
+    const subSnap = await getDoc(doc(db, 'users', uid, 'profile', 'main'));
+    if (subSnap.exists()) {
+      return subSnap.data() as UserProfile;
+    }
+    return null;
+  } catch (err) {
+    console.warn('Failed to load profile from Firestore:', err);
+    // Offline local fallback
+    const local = localStorage.getItem(`vita_profile_${uid}`);
+    if (local) {
+      try {
+        return JSON.parse(local);
+      } catch {
+        return null;
+      }
+    }
+    return null;
   }
 }
-
-// Default user profile as specified in prompt:
-// Age: 22, Height: 5'11", Current: 106 kg, Target: 96 kg, Pace: Aggressive (1 to 1.5 kg loss/week)
-export const DEFAULT_USER_PROFILE: UserProfile = {
-  uid: 'guest_user',
-  email: 'user@vita.app',
-  displayName: 'Fitness Athlete',
-  age: 22,
-  height: "5'11\"",
-  currentWeightKg: 106,
-  targetWeightKg: 96,
-  pace: 'Aggressive (1 to 1.5 kg loss per week)',
-  dailyCalorieTarget: 1850,
-  dailyStepGoal: 10000,
-  dailyWaterGoalMl: 3000,
-  themeMode: 'light',
-  updatedAt: new Date().toISOString(),
-};
-
-// Data persistence helpers with Firestore + LocalStorage fallback
-const STORAGE_PREFIX = 'vita_health_';
 
 export async function saveUserProfile(profile: UserProfile): Promise<void> {
-  localStorage.setItem(`${STORAGE_PREFIX}profile`, JSON.stringify(profile));
-  if (auth.currentUser && auth.currentUser.uid === profile.uid) {
-    const path = `users/${profile.uid}`;
-    try {
-      await setDoc(doc(db, 'users', profile.uid), profile);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, path);
-    }
-  }
-}
+  const path = `users/${profile.uid}`;
+  // Save locally first for instant UI response & offline support
+  localStorage.setItem(`vita_profile_${profile.uid}`, JSON.stringify(profile));
 
-export async function loadUserProfile(uid?: string): Promise<UserProfile> {
-  const local = localStorage.getItem(`${STORAGE_PREFIX}profile`);
-  let profile = local ? JSON.parse(local) : { ...DEFAULT_USER_PROFILE };
-  if (uid && auth.currentUser) {
-    const path = `users/${uid}`;
-    try {
-      const snap = await getDoc(doc(db, 'users', uid));
-      if (snap.exists()) {
-        profile = snap.data() as UserProfile;
-        localStorage.setItem(`${STORAGE_PREFIX}profile`, JSON.stringify(profile));
-      } else {
-        profile.uid = uid;
-        profile.email = auth.currentUser.email || profile.email;
-        profile.displayName = auth.currentUser.displayName || profile.displayName;
-        await saveUserProfile(profile);
-      }
-    } catch (err) {
-      console.warn('Could not load user profile from Firestore, using cached/default:', err);
-    }
-  }
-  return profile;
-}
-
-export async function saveMeal(meal: MealItem): Promise<void> {
-  const localMeals = loadMealsLocal();
-  const existingIndex = localMeals.findIndex((m) => m.id === meal.id);
-  if (existingIndex >= 0) {
-    localMeals[existingIndex] = meal;
-  } else {
-    localMeals.unshift(meal);
-  }
-  localStorage.setItem(`${STORAGE_PREFIX}meals`, JSON.stringify(localMeals));
-
-  if (auth.currentUser) {
-    const path = `users/${auth.currentUser.uid}/meals/${meal.id}`;
-    try {
-      await setDoc(doc(db, 'users', auth.currentUser.uid, 'meals', meal.id), meal);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, path);
-    }
-  }
-}
-
-export async function deleteMeal(mealId: string): Promise<void> {
-  const localMeals = loadMealsLocal().filter((m) => m.id !== mealId);
-  localStorage.setItem(`${STORAGE_PREFIX}meals`, JSON.stringify(localMeals));
-
-  if (auth.currentUser) {
-    const path = `users/${auth.currentUser.uid}/meals/${mealId}`;
-    try {
-      await deleteDoc(doc(db, 'users', auth.currentUser.uid, 'meals', mealId));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, path);
-    }
-  }
-}
-
-export function loadMealsLocal(): MealItem[] {
-  const local = localStorage.getItem(`${STORAGE_PREFIX}meals`);
-  if (!local) {
-    // Initial sample meals for today showcasing deficit tracking
-    const today = new Date().toISOString().split('T')[0];
-    const initial: MealItem[] = [
-      {
-        id: 'meal_1',
-        userId: 'guest_user',
-        name: 'Egg Whites, Spinach & Whole Wheat Toast',
-        calories: 340,
-        proteinGrams: 32,
-        carbsGrams: 28,
-        fatGrams: 4,
-        mealType: 'breakfast',
-        timestamp: `${today}T08:30:00Z`,
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: 'meal_2',
-        userId: 'guest_user',
-        name: 'Grilled Chicken Breast with Steamed Broccoli & Quinoa',
-        calories: 520,
-        proteinGrams: 55,
-        carbsGrams: 42,
-        fatGrams: 8,
-        mealType: 'lunch',
-        timestamp: `${today}T13:15:00Z`,
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: 'meal_3',
-        userId: 'guest_user',
-        name: 'Whey Protein Isolate Shake with Almond Milk',
-        calories: 160,
-        proteinGrams: 28,
-        carbsGrams: 4,
-        fatGrams: 2,
-        mealType: 'snack',
-        timestamp: `${today}T16:45:00Z`,
-        createdAt: new Date().toISOString(),
-      },
-    ];
-    localStorage.setItem(`${STORAGE_PREFIX}meals`, JSON.stringify(initial));
-    return initial;
-  }
   try {
-    return JSON.parse(local);
-  } catch {
-    return [];
+    await setDoc(doc(db, 'users', profile.uid), profile, { merge: true });
+    // Also keep users/{uid}/profile/main synchronized
+    await setDoc(doc(db, 'users', profile.uid, 'profile', 'main'), profile, { merge: true });
+  } catch (err) {
+    console.warn('Firestore offline or write deferred:', err);
   }
 }
 
-export async function loadMealsFromFirestore(uid: string): Promise<MealItem[]> {
-  const path = `users/${uid}/meals`;
+// -------------------------------------------------------------
+// DAILY TRACKING PERSISTENCE (users/{uid}/days/{YYYY-MM-DD})
+// -------------------------------------------------------------
+
+export function createEmptyDailyEntry(userId: string, dateKey: string): DailyEntry {
+  return {
+    id: dateKey,
+    userId,
+    date: dateKey,
+    caloriesConsumed: 0,
+    proteinGrams: 0,
+    carbsGrams: 0,
+    fatGrams: 0,
+    meals: [],
+    workouts: [],
+    workoutCaloriesBurned: 0,
+    steps: 0,
+    stepCaloriesBurned: 0,
+    totalCaloriesBurned: 0,
+    waterMl: 0,
+    weight: null,
+    note: '',
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export async function loadDailyEntry(uid: string, dateKey: string): Promise<DailyEntry> {
+  const localKey = `vita_day_${uid}_${dateKey}`;
+  const localData = localStorage.getItem(localKey);
+
   try {
-    const q = query(collection(db, 'users', uid, 'meals'));
-    const snap = await getDocs(q);
-    const meals: MealItem[] = [];
-    snap.forEach((d) => meals.push(d.data() as MealItem));
-    if (meals.length > 0) {
-      localStorage.setItem(`${STORAGE_PREFIX}meals`, JSON.stringify(meals));
-      return meals;
+    const snap = await getDoc(doc(db, 'users', uid, 'days', dateKey));
+    if (snap.exists()) {
+      const data = snap.data() as DailyEntry;
+      localStorage.setItem(localKey, JSON.stringify(data));
+      return data;
     }
   } catch (err) {
-    console.warn('Failed to load meals from Firestore:', err);
+    console.warn(`Could not load daily entry for ${dateKey} from Firestore:`, err);
   }
-  return loadMealsLocal();
-}
 
-export async function saveWorkout(workout: WorkoutLog): Promise<void> {
-  const local = loadWorkoutsLocal();
-  local.unshift(workout);
-  localStorage.setItem(`${STORAGE_PREFIX}workouts`, JSON.stringify(local));
-
-  if (auth.currentUser) {
-    const path = `users/${auth.currentUser.uid}/workouts/${workout.id}`;
+  // Return local storage if present
+  if (localData) {
     try {
-      await setDoc(doc(db, 'users', auth.currentUser.uid, 'workouts', workout.id), workout);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, path);
+      return JSON.parse(localData);
+    } catch {
+      // fallback
     }
   }
+
+  // Fresh empty day document
+  const empty = createEmptyDailyEntry(uid, dateKey);
+  return empty;
 }
 
-export function loadWorkoutsLocal(): WorkoutLog[] {
-  const local = localStorage.getItem(`${STORAGE_PREFIX}workouts`);
-  if (!local) {
-    const today = new Date().toISOString().split('T')[0];
-    const initial: WorkoutLog[] = [
-      {
-        id: 'w_1',
-        userId: 'guest_user',
-        mode: 'home',
-        dayName: 'Monday (Shoulders/Neck)',
-        targetMuscles: 'Shoulders, Neck, Traps',
-        durationMinutes: 48,
-        caloriesBurned: 380,
-        exercisesCompleted: ['DB Overhead Press', 'DB Lateral Raises', 'DB Shrugs', 'Band Neck Extensions'],
-        notes: 'Felt great pump. Clean form on lateral raises.',
-        timestamp: `${today}T07:15:00Z`,
-        createdAt: new Date().toISOString(),
-      },
-    ];
-    localStorage.setItem(`${STORAGE_PREFIX}workouts`, JSON.stringify(initial));
-    return initial;
-  }
+export async function saveDailyEntry(entry: DailyEntry): Promise<void> {
+  const localKey = `vita_day_${entry.userId}_${entry.date}`;
+  localStorage.setItem(localKey, JSON.stringify(entry));
+
   try {
-    return JSON.parse(local);
-  } catch {
+    await setDoc(doc(db, 'users', entry.userId, 'days', entry.date), entry);
+  } catch (err) {
+    console.warn(`Daily entry write deferred for ${entry.date}:`, err);
+  }
+}
+
+export async function loadRecentDailyEntries(uid: string, limitDays: number = 30): Promise<DailyEntry[]> {
+  const path = `users/${uid}/days`;
+  try {
+    const q = query(collection(db, 'users', uid, 'days'), orderBy('date', 'desc'), limit(limitDays));
+    const snap = await getDocs(q);
+    const results: DailyEntry[] = [];
+    snap.forEach((d) => {
+      results.push(d.data() as DailyEntry);
+    });
+    // Sort chronologically ascending
+    results.sort((a, b) => a.date.localeCompare(b.date));
+    return results;
+  } catch (err) {
+    console.warn('Could not query recent days from Firestore, checking localStorage:', err);
+    // Find all stored days in localStorage
+    const localEntries: DailyEntry[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(`vita_day_${uid}_`)) {
+        try {
+          const parsed = JSON.parse(localStorage.getItem(k) || '');
+          if (parsed && parsed.date) {
+            localEntries.push(parsed);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+    localEntries.sort((a, b) => a.date.localeCompare(b.date));
+    return localEntries.slice(-limitDays);
+  }
+}
+
+// -------------------------------------------------------------
+// USER REMINDERS PERSISTENCE (users/{uid}/reminders/{reminderId})
+// -------------------------------------------------------------
+
+export async function loadUserReminders(uid: string): Promise<UserReminder[]> {
+  try {
+    const snap = await getDocs(collection(db, 'users', uid, 'reminders'));
+    const reminders: UserReminder[] = [];
+    snap.forEach((d) => reminders.push(d.data() as UserReminder));
+    reminders.sort((a, b) => a.time.localeCompare(b.time));
+    localStorage.setItem(`vita_reminders_${uid}`, JSON.stringify(reminders));
+    return reminders;
+  } catch (err) {
+    const local = localStorage.getItem(`vita_reminders_${uid}`);
+    if (local) {
+      try {
+        return JSON.parse(local);
+      } catch {
+        return [];
+      }
+    }
     return [];
   }
 }
 
-export async function saveSosChatThread(messages: ChatMessage[]): Promise<void> {
-  localStorage.setItem(`${STORAGE_PREFIX}chat_history`, JSON.stringify(messages));
-  if (auth.currentUser) {
-    const path = `users/${auth.currentUser.uid}/sosChats/active_session`;
-    try {
-      await setDoc(doc(db, 'users', auth.currentUser.uid, 'sosChats', 'active_session'), {
-        id: 'active_session',
-        userId: auth.currentUser.uid,
-        messages: messages.slice(-40),
-        updatedAt: new Date().toISOString(),
-      });
-    } catch (err) {
-      console.warn('Could not save chat to firestore:', err);
-    }
+export async function saveUserReminder(reminder: UserReminder): Promise<void> {
+  const localReminders = await loadUserReminders(reminder.userId);
+  const idx = localReminders.findIndex((r) => r.id === reminder.id);
+  if (idx >= 0) {
+    localReminders[idx] = reminder;
+  } else {
+    localReminders.push(reminder);
+  }
+  localStorage.setItem(`vita_reminders_${reminder.userId}`, JSON.stringify(localReminders));
+
+  try {
+    await setDoc(doc(db, 'users', reminder.userId, 'reminders', reminder.id), reminder);
+  } catch (err) {
+    console.warn('Deferred reminder save:', err);
   }
 }
 
-export function loadSosChatHistory(): ChatMessage[] {
-  const local = localStorage.getItem(`${STORAGE_PREFIX}chat_history`);
-  if (!local) return [];
+export async function deleteUserReminder(uid: string, reminderId: string): Promise<void> {
+  const localReminders = (await loadUserReminders(uid)).filter((r) => r.id !== reminderId);
+  localStorage.setItem(`vita_reminders_${uid}`, JSON.stringify(localReminders));
+
   try {
-    return JSON.parse(local);
-  } catch {
-    return [];
+    await deleteDoc(doc(db, 'users', uid, 'reminders', reminderId));
+  } catch (err) {
+    console.warn('Deferred reminder delete:', err);
   }
 }
 
-// Authentication trigger
-export async function loginWithGoogle(): Promise<User | null> {
+// -------------------------------------------------------------
+// AUTHENTICATION
+// -------------------------------------------------------------
+
+export async function loginWithGoogle(): Promise<User> {
   try {
-    const result = await signInWithPopup(auth, googleProvider);
-    return result.user;
-  } catch (error) {
-    console.error('Google Sign In failed:', error);
-    throw error;
+    const res = await signInWithPopup(auth, googleProvider);
+    return res.user;
+  } catch (err) {
+    console.error('Google Sign In Error:', err);
+    throw err;
   }
 }
 
 export async function logoutUser(): Promise<void> {
-  try {
-    await firebaseSignOut(auth);
-  } catch (error) {
-    console.error('Sign out failed:', error);
-  }
+  await firebaseSignOut(auth);
 }

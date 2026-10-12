@@ -1,7 +1,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default Deny All
+    // Default Deny
     match /{document=**} {
       allow read, write: if false;
     }
@@ -14,80 +14,11 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    function incoming() {
-      return request.resource.data;
-    }
-
-    function existing() {
-      return resource.data;
-    }
-
-    function isValidUser(data, userId) {
-      return data.uid == userId &&
-        data.currentWeightKg is number &&
-        data.targetWeightKg is number;
-    }
-
-    function isValidMeal(data, userId) {
-      return data.userId == userId &&
-        data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
-        data.calories is number &&
-        data.proteinGrams is number;
-    }
-
-    function isValidWorkout(data, userId) {
-      return data.userId == userId &&
-        data.mode is string && data.mode.size() <= 20 &&
-        data.caloriesBurned is number;
-    }
-
-    function isValidDailyLog(data, userId) {
-      return data.userId == userId &&
-        data.steps is number &&
-        data.activeCalories is number;
-    }
-
-    function isValidSosChat(data, userId) {
-      return data.userId == userId &&
-        data.messages is list && data.messages.size() <= 50;
-    }
-
     match /users/{userId} {
-      allow get: if isOwner(userId) && isValidId(userId);
-      allow create: if isOwner(userId) && isValidId(userId) && isValidUser(incoming(), userId);
-      allow update: if isOwner(userId) && isValidId(userId) && isValidUser(incoming(), userId);
-      allow delete: if isOwner(userId) && isValidId(userId);
+      allow read, write: if isOwner(userId);
 
-      match /meals/{mealId} {
-        allow get, list: if isOwner(userId);
-        allow create: if isOwner(userId) && isValidId(mealId) && isValidMeal(incoming(), userId);
-        allow update: if isOwner(userId) && isValidId(mealId) && isValidMeal(incoming(), userId);
-        allow delete: if isOwner(userId) && isValidId(mealId);
-      }
-
-      match /workouts/{workoutId} {
-        allow get, list: if isOwner(userId);
-        allow create: if isOwner(userId) && isValidId(workoutId) && isValidWorkout(incoming(), userId);
-        allow update: if isOwner(userId) && isValidId(workoutId) && isValidWorkout(incoming(), userId);
-        allow delete: if isOwner(userId) && isValidId(workoutId);
-      }
-
-      match /dailyHealthLogs/{dateId} {
-        allow get, list: if isOwner(userId);
-        allow create: if isOwner(userId) && isValidId(dateId) && isValidDailyLog(incoming(), userId);
-        allow update: if isOwner(userId) && isValidId(dateId) && isValidDailyLog(incoming(), userId);
-        allow delete: if isOwner(userId) && isValidId(dateId);
-      }
-
-      match /sosChats/{chatId} {
-        allow get, list: if isOwner(userId);
-        allow create: if isOwner(userId) && isValidId(chatId) && isValidSosChat(incoming(), userId);
-        allow update: if isOwner(userId) && isValidId(chatId) && isValidSosChat(incoming(), userId);
-        allow delete: if isOwner(userId) && isValidId(chatId);
+      match /{allSubcollections=**} {
+        allow read, write: if isOwner(userId);
       }
     }
   }

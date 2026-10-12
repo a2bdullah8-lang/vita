@@ -36,12 +36,13 @@ export const CravingCrusherModal: React.FC<CravingCrusherModalProps> = ({
   // Initialize welcome coach message if history is empty
   useEffect(() => {
     if (messages.length === 0) {
+      const kgDelta = Math.max(0, Number((profile.currentWeightKg - profile.targetWeightKg).toFixed(1)));
       const initial: ChatMessage = {
         id: 'msg_welcome',
         role: 'model',
-        content: `Listen to me carefully: You started at ${profile.currentWeightKg} kg, and our target is 96 kg. That is 10 kg of pure discipline waiting for you! 
+        content: `Listen to me carefully: You are currently at ${profile.currentWeightKg} kg, and your target is ${profile.targetWeightKg} kg${kgDelta > 0 ? ` (${kgDelta} kg of pure discipline to go)` : ' (target reached, now we maintain)'}! 
 
-Whenever you feel like cheating on your diet or being lazy on the couch, talk to me right here. Hindi, English, Hinglish—batao kya chal raha hai dimag mein? We will crush every single craving together!`,
+Whenever you feel like cheating on your diet or feeling unmotivated, talk to me right here. Hindi, English, Hinglish—batao kya chal raha hai dimag mein? We will crush every single craving together!`,
         timestamp: new Date().toISOString(),
       };
       setMessages([initial]);
@@ -49,7 +50,7 @@ Whenever you feel like cheating on your diet or being lazy on the couch, talk to
     } else {
       setMessages(chatHistory);
     }
-  }, [chatHistory, profile.currentWeightKg]);
+  }, [chatHistory, profile.currentWeightKg, profile.targetWeightKg]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
