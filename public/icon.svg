@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="128" fill="#FCFBF9"/>
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#E7E5E4" stroke-width="12"/>
+  <path d="M 256 76 A 180 180 0 0 1 436 256" fill="none" stroke="#1C1917" stroke-width="20" stroke-linecap="round"/>
+  <circle cx="256" cy="256" r="130" fill="none" stroke="#F5F5F4" stroke-width="8"/>
+  <path d="M 256 126 A 130 130 0 0 1 386 256" fill="none" stroke="#EA580C" stroke-width="16" stroke-linecap="round"/>
+  <path d="M 190 280 L 235 325 L 325 210" fill="none" stroke="#1C1917" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="256" y="410" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="44" font-weight="700" letter-spacing="6" fill="#1C1917" text-anchor="middle">VITA</text>
+</svg>

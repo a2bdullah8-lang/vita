@@ -1,0 +1,6 @@
+{
+  "name": "VITA | Aesthetic Health & Fitness PWA",
+  "description": "Minimalist personal health, calorie deficit tracking, dual-mode workouts, and AI Craving Crusher coach.",
+  "requestFramePermissions": ["notifications"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
